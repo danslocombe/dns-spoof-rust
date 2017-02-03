@@ -1,0 +1,8 @@
+[package]
+name = "dns-spoof"
+version = "0.1.0"
+authors = ["Dan Slocombe <ds4314@ic.ac.uk>"]
+
+[dependencies]
+argparse = "*"
+"pnet" = "*"
