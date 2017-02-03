@@ -118,6 +118,7 @@ fn process_ipv4_udp<'t>(a : &'t (&'t Ipv4Packet<'t>, UdpPacket<'t>)) -> Option<I
 fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket) -> Option<Ipv4Packet<'t>>{
     println!("Got packet {} -> {}", ipv4.get_source(), ipv4.get_destination());
     //  Assume for now is dns
+    //  TODO truncation
     let dns_data : &[ u8 ] = udp.payload();
 
     let id = build_u16(dns_data, 0);
@@ -136,12 +137,40 @@ fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket) -> Option<Ipv4
     for datum in dns_data {
         print!("{:X} ", datum);
     }
-    print!("\n");
+
+    let (domain_name, domain_name_end) = get_domain_name(dns_data, 12);
+    print!("\n domain name : {} END", domain_name);
 
 
 
     None
 }
+
+fn get_domain_name(data : &[ u8 ], start : usize) -> (String, usize){
+    let mut end = start;
+    let mut name = "".to_owned();
+    let mut cur = start;
+    let mut first : bool = true;
+    for _ in 1..64 {
+        let length = data[cur];
+        if length == 0 {
+            break;
+        }
+        //  TODO refactor
+        if !first {
+            name.push('.');
+            first = false;
+        }
+        let str_end = cur + (length as usize);
+        for i in cur..str_end {
+            name.push(data[i] as char);
+        }
+        end = str_end;
+    }
+
+    (name, end)
+}
+
 
 fn build_u16(bytes : &[u8], index : usize) -> u16 {
     unsafe {transmute::<[u8; 2], u16> ([bytes[index], bytes[index + 1]]) }.to_be()
