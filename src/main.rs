@@ -57,47 +57,34 @@ fn main() {
     }
 
 
-	// Create a new channel, transporting layer 2 packets
-    let (mut tx, mut rx) = match datalink::channel(&interface, Default::default()) {
+    // Create a new channel, transporting layer 2 packets
+    let (tx, mut rx) = match datalink::channel(&interface, Default::default()) {
         Ok(Ethernet(tx, rx)) => (tx, rx),
         Ok(_) => panic!("Unhandled channel type"),
         Err(e) => panic!("An error occurred when creating the datalink channel: {}", e)
     };
 
-	let mut iter = rx.iter();
+    let mut iter = rx.iter();
 
-	loop {
-		match iter.next() {
-			Ok(eth) => {
-                //  TODO monadic chaining
-                let lifetimes = &eth;
-                let maybe_ipv4 : Option<Ipv4Packet> = unwrap_eth(lifetimes);
-
-                //maybe_ipv4.map(|&ipv4| {println!("{} -> {}", ipv4.get_source(), ipv4.get_destination());});
+    loop {
+        match iter.next() {
+            Ok(eth) => {
+                let maybe_ipv4 : Option<Ipv4Packet>
+                    =   unwrap_eth(&eth);
 
                 let maybe_ipv4_udp : Option<(&Ipv4Packet, UdpPacket)>
-                    = match maybe_ipv4 {
-                        Some(ref ipv4) => {
-                            unwrap_ipv4(&ipv4)
-                        }
-                        None => {
-                            None
-                        }
-                    };
-                let to_send : Option<Ipv4Packet>
-                    = match maybe_ipv4_udp {
-                        Some((ipv4_ref, ref udp)) => {
-                            process_packet(ipv4_ref, udp)
-                        }
-                        None => {None}
-                    };
-			}	
-			Err(e) => {
-				panic!("An error occurred reading packet: {}", e);
-			}
-		}
+                    =   maybe_ipv4.as_ref().and_then(unwrap_ipv4);
 
-	}
+                let to_send : Option<Ipv4Packet>
+                    =   maybe_ipv4_udp.as_ref().and_then(process_ipv4_udp);
+            }
+
+            Err(e) => {
+                panic!("An error occurred reading packet: {}", e);
+            }
+        }
+
+    }
 
 
 }
@@ -124,13 +111,17 @@ fn unwrap_ipv4<'p>(ipv4 : &'p Ipv4Packet) -> Option<(&'p Ipv4Packet<'p>, UdpPack
     }
 }
 
+fn process_ipv4_udp<'t>(a : &'t (&'t Ipv4Packet<'t>, UdpPacket<'t>)) -> Option<Ipv4Packet<'t>> {
+    let (ipv4_ref, ref udp) : (&Ipv4Packet, UdpPacket) = *a; 
+    process_packet(ipv4_ref, &udp)
+}
 fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket) -> Option<Ipv4Packet<'t>>{
-	println!("Got packet {} -> {}", ipv4.get_source(), ipv4.get_destination());
+    println!("Got packet {} -> {}", ipv4.get_source(), ipv4.get_destination());
     //  Assume for now is dns
     let dns_data : &[ u8 ] = udp.payload();
 
     let id = build_u16(dns_data, 0);
-    if (id == 0) {return None;}
+    if id == 0 {return None;}
     println!("Id {:X}", id);
 
     let flags = build_u16(dns_data, 2);
@@ -139,7 +130,13 @@ fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket) -> Option<Ipv4
     println!("is query {}", is_query);
 
     let query_count = build_u16(dns_data, 4);
-    println!("full data {:?}", query_count);
+    println!("query count {}", query_count);
+
+    print!("All data: ");
+    for datum in dns_data {
+        print!("{:X} ", datum);
+    }
+    print!("\n");
 
 
 
@@ -150,13 +147,3 @@ fn build_u16(bytes : &[u8], index : usize) -> u16 {
     unsafe {transmute::<[u8; 2], u16> ([bytes[index], bytes[index + 1]]) }.to_be()
 }
 
-struct Dns {
-
-}
-
-/*
-fn is_dns(&packet : UdpPacket) -> bool{
-	true
-}
-
-*/
