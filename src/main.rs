@@ -18,8 +18,8 @@ fn main() {
 
     //  Options
     let mut target_interface : String = "eth0".to_string();
-    let mut domain : String = "".to_string();
-    let mut target_ip : String = "".to_string();
+    let mut domain_name : String = "".to_string();
+    let mut ip_redirect : String = "".to_string();
 
     //  Parse arguments
     {
@@ -28,11 +28,11 @@ fn main() {
         argparse.refer(&mut target_interface)
             .add_option(&["-i", "--interface"], Store,
             "Specify an interface");
-        argparse.refer(&mut domain)
-            .add_argument("domain", Store,
+        argparse.refer(&mut domain_name)
+            .add_argument("domain_name", Store,
             "Domain to spoof");
-        argparse.refer(&mut target_ip)
-            .add_argument("target_ip", Store,
+        argparse.refer(&mut ip_redirect)
+            .add_argument("ip_redirect", Store,
             "Target IP address");
         argparse.parse_args_or_exit();
     }
@@ -66,6 +66,7 @@ fn main() {
 
     let mut iter = rx.iter();
 
+
     loop {
         match iter.next() {
             Ok(eth) => {
@@ -75,8 +76,13 @@ fn main() {
                 let maybe_ipv4_udp : Option<(&Ipv4Packet, UdpPacket)>
                     =   maybe_ipv4.as_ref().and_then(unwrap_ipv4);
 
+                //  Construct closure with the redirect ip and domain_name
+                let process_udp_with_redirect = |x| {
+                    process_ipv4_udp(&domain_name, &ip_redirect, x)
+                };
+
                 let to_send : Option<Ipv4Packet>
-                    =   maybe_ipv4_udp.as_ref().and_then(process_ipv4_udp);
+                    =   maybe_ipv4_udp.as_ref().and_then(process_udp_with_redirect);
             }
 
             Err(e) => {
@@ -111,13 +117,14 @@ fn unwrap_ipv4<'p>(ipv4 : &'p Ipv4Packet) -> Option<(&'p Ipv4Packet<'p>, UdpPack
     }
 }
 
-fn process_ipv4_udp<'t>(a : &'t (&'t Ipv4Packet<'t>, UdpPacket<'t>)) -> Option<Ipv4Packet<'t>> {
+fn process_ipv4_udp<'t>(domain_name : &String, ip_redirect : &String, a : &'t (&'t Ipv4Packet<'t>, UdpPacket<'t>)) -> Option<Ipv4Packet<'t>> {
     let (ipv4_ref, ref udp) : (&Ipv4Packet, UdpPacket) = *a; 
-    process_packet(ipv4_ref, &udp)
+    process_packet(ipv4_ref, &udp, domain_name, ip_redirect)
 }
-fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket) -> Option<Ipv4Packet<'t>>{
+fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket, domain_name : &String, ip_redirect : &String) -> Option<Ipv4Packet<'t>>{
     println!("Got packet {} -> {}", ipv4.get_source(), ipv4.get_destination());
     //  Assume for now is dns
+    //  TODO check array access, malformed packet will crash program
     //  TODO truncation
     let dns_data : &[ u8 ] = udp.payload();
 
@@ -138,10 +145,21 @@ fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket) -> Option<Ipv4
         print!("{:X} ", datum);
     }
 
-    let (domain_name, domain_name_end) = get_domain_name(dns_data, 12);
-    print!("\n domain name : {} END", domain_name);
+    let mut domain_names : Vec<String> = Vec::new();
+    let mut read = 12;
+    for _ in 0..query_count {
+        let (domain_name, domain_name_end) = get_domain_name(dns_data, read);
+        print!("\n domain name : {} END", domain_name);
+        read = domain_name_end;
+        domain_names.push(domain_name);
+    }
 
-
+    //  Allow only one match as we have only one domain name we can
+    //  redirect
+    let d_match = domain_names.iter().filter(|name| name == &domain_name).next();
+    d_match.map(|d_name| {
+        println!("\nMatching Domain, redirect to {}", ip_redirect);
+    });
 
     None
 }
@@ -153,22 +171,29 @@ fn get_domain_name(data : &[ u8 ], start : usize) -> (String, usize){
     let mut first : bool = true;
     for _ in 1..64 {
         let length = data[cur];
+        cur = cur + 1;
+        println!("length = {}", length);
         if length == 0 {
+            println!("End of domain");
             break;
         }
         //  TODO refactor
         if !first {
             name.push('.');
+        }
+        else {
             first = false;
         }
         let str_end = cur + (length as usize);
         for i in cur..str_end {
+            print!("i={} {:X} ", i, data[i]);
             name.push(data[i] as char);
         }
-        end = str_end;
+	    cur = str_end;
     }
 
-    (name, end)
+    println!("Domain : {}", name);
+    (name, cur)
 }
 
 
