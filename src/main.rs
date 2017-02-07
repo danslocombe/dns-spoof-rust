@@ -5,7 +5,7 @@ use argparse::{ArgumentParser, Store, StoreTrue};
 
 use pnet::datalink::{self, NetworkInterface};
 use pnet::datalink::Channel::Ethernet;
-use pnet::packet::{Packet, MutablePacket};
+use pnet::packet::{Packet};
 use pnet::packet::ethernet::{EthernetPacket, EtherType};
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::ip::IpNextHeaderProtocol;
@@ -121,7 +121,7 @@ fn process_ipv4_udp<'t>(domain_name : &String, ip_redirect : &String, a : &'t (&
     let (ipv4_ref, ref udp) : (&Ipv4Packet, UdpPacket) = *a; 
     process_packet(ipv4_ref, &udp, domain_name, ip_redirect)
 }
-fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket, domain_name : &String, ip_redirect : &String) -> Option<Ipv4Packet<'t>>{
+fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket, name_redirect : &String, ip_redirect : &String) -> Option<Ipv4Packet<'t>>{
     println!("Got packet {} -> {}", ipv4.get_source(), ipv4.get_destination());
     //  Assume for now is dns
     //  TODO check array access, malformed packet will crash program
@@ -139,38 +139,38 @@ fn process_packet<'t>(ipv4 : &'t Ipv4Packet, udp : &'t UdpPacket, domain_name : 
 
     let query_count = build_u16(dns_data, 4);
     println!("query count {}", query_count);
+    //  We only reply to packets with exactly one request
+    if query_count != 1 {return None;}
 
     print!("All data: ");
     for datum in dns_data {
         print!("{:X} ", datum);
     }
 
-    let mut domain_names : Vec<String> = Vec::new();
-    let mut read = 12;
-    for _ in 0..query_count {
-        let (domain_name, domain_name_end) = get_domain_name(dns_data, read);
-        print!("\n domain name : {} END", domain_name);
-        read = domain_name_end;
-        domain_names.push(domain_name);
-    }
+    let domain_name = get_domain_name(dns_data, 12);
 
-    //  Allow only one match as we have only one domain name we can
-    //  redirect
-    let d_match = domain_names.iter().filter(|name| name == &domain_name).next();
-    d_match.map(|d_name| {
-        println!("\nMatching Domain, redirect to {}", ip_redirect);
-    });
-
-    None
+    domain_name.as_ref().and_then(|dn| {
+        print!("\n domain name : {} END", dn);
+        if dn == name_redirect {
+            println!("\nMatchin Domain, redirecting to {}", ip_redirect);
+            None
+        }
+        else {
+            None
+        }
+    })
 }
 
-fn get_domain_name(data : &[ u8 ], start : usize) -> (String, usize){
-    let mut end = start;
+fn get_domain_name(data : &[ u8 ], start : usize) -> Option<String>{
     let mut name = "".to_owned();
     let mut cur = start;
     let mut first : bool = true;
     for _ in 1..64 {
-        let length = data[cur];
+        if (data).len() < cur {return None;}
+        let length = data[cur] as usize;
+
+        if (data).len() < cur + length {return None;}
+
         cur = cur + 1;
         println!("length = {}", length);
         if length == 0 {
@@ -193,7 +193,7 @@ fn get_domain_name(data : &[ u8 ], start : usize) -> (String, usize){
     }
 
     println!("Domain : {}", name);
-    (name, cur)
+    Some (name)
 }
 
 
